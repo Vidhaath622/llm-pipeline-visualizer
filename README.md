@@ -1,5 +1,7 @@
 # LLM Pipeline Visualizer
 
+**Live:** https://llm-pipeline-visualizer-puce.vercel.app
+
 Follow a sentence from plain text to the vectors a language model works with:
 
 Vocabulary → Text → Vocabulary check → Subword tokenization (BPE) → Tokens → Token IDs → Vectors → Spelling vs meaning (3D graphs)
