@@ -1,6 +1,9 @@
 // The tokenizer core. Pure functions, no React, so it can be tested on its own.
 //
 // Pipeline:  text -> words -> (in vocab? keep : BPE split) -> tokens -> IDs
+//
+// The vocabulary can grow: words learned while the app runs get IDs after the
+// base vocabulary (baseSize, baseSize + 1, ...), in the order they were learned.
 
 export type Vocab = Record<string, number>
 export type Merge = [string, string]
@@ -14,7 +17,9 @@ export interface MergeStep {
 export interface WordResult {
   word: string
   inVocab: boolean // stage 3: was the whole word already a token?
-  steps: MergeStep[] // stage 4: BPE history (empty when inVocab)
+  learned: boolean // in vocab only because it was added at runtime
+  steps: MergeStep[] // stage 4: BPE history (empty for base-vocab words)
+  bpeTokens: string[] // what BPE gives (for a learned word: what it replaced)
   tokens: string[] // stage 5
   ids: number[] // stage 6
 }
@@ -28,14 +33,20 @@ export interface TokenizeResult {
 
 export class Tokenizer {
   vocab: Vocab
+  /** Number of tokens in the trained vocabulary; learned IDs start here. */
+  baseSize: number
+  learned: string[]
   private ranks: Map<string, number>
   private unkId: number
 
-  constructor(vocab: Vocab, merges: Merge[]) {
-    this.vocab = vocab
+  constructor(baseVocab: Vocab, merges: Merge[], learned: string[] = []) {
+    this.baseSize = Math.max(...Object.values(baseVocab)) + 1
+    this.learned = learned.filter((w) => !(w in baseVocab))
+    this.vocab = { ...baseVocab }
+    this.learned.forEach((w, i) => (this.vocab[w] = this.baseSize + i))
     // A merge's rank is its position in the list: lower = learned earlier = applied first.
     this.ranks = new Map(merges.map(([a, b], i) => [`${a} ${b}`, i]))
-    this.unkId = vocab['[UNK]'] ?? 1
+    this.unkId = baseVocab['[UNK]'] ?? 1
   }
 
   /** Stage 2: lowercase, keep only letters and spaces. */
@@ -66,6 +77,10 @@ export class Tokenizer {
     return steps
   }
 
+  isLearnedId(id: number): boolean {
+    return id >= this.baseSize
+  }
+
   /** Stage 6: token -> integer ID. */
   toId(token: string): number {
     return this.vocab[token] ?? this.unkId
@@ -76,12 +91,25 @@ export class Tokenizer {
     const words = normalized ? normalized.split(' ') : []
     const results: WordResult[] = words.map((word) => {
       // Stage 3: the vocabulary check.
-      if (word in this.vocab) {
-        return { word, inVocab: true, steps: [], tokens: [word], ids: [this.toId(word)] }
+      const id = this.vocab[word]
+      if (id !== undefined && !this.isLearnedId(id)) {
+        return { word, inVocab: true, learned: false, steps: [], bpeTokens: [word], tokens: [word], ids: [id] }
       }
       const steps = this.bpe(word)
-      const tokens = steps[steps.length - 1].symbols
-      return { word, inVocab: false, steps, tokens, ids: tokens.map((t) => this.toId(t)) }
+      const bpeTokens = steps[steps.length - 1].symbols
+      if (id !== undefined) {
+        // Learned at runtime: now a single token, but keep what BPE would have done.
+        return { word, inVocab: true, learned: true, steps, bpeTokens, tokens: [word], ids: [id] }
+      }
+      return {
+        word,
+        inVocab: false,
+        learned: false,
+        steps,
+        bpeTokens,
+        tokens: bpeTokens,
+        ids: bpeTokens.map((t) => this.toId(t)),
+      }
     })
     return {
       normalized,

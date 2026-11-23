@@ -6,6 +6,12 @@ Follow a sentence from plain text to the vectors a language model works with:
 
 Vocabulary → Text → Vocabulary check → Subword tokenization (BPE) → Tokens → Token IDs → Vectors → Spelling vs meaning (3D graphs)
 
+## Learning new words
+
+With **Learn new words** on (stage 1), any word the vocabulary doesn't know is added as a new token once you pause typing and its BPE split has played. Learned words get the next free IDs (5092, 5093, …), show in blue, and are single tokens from then on. Each learned token's vector starts as the average of the pieces it replaced, since it has no trained row in the embedding matrix. Learned words are saved in your browser; remove one with × or use **Reset to trained vocabulary**.
+
+Real LLMs can't do this on the fly: their vocabulary is fixed at training time, and adding a token means resizing the embedding matrix and training again.
+
 ## Run it
 
 ```bash
@@ -22,7 +28,8 @@ npm run build      # static site in dist/
 | `public/data/` | The built data: `vocab.json`, `merges.json`, `embeddings.b64.txt`, `embeddings.meta.json` |
 | `src/lib/tokenizer.ts` | Stages 2–6: normalize, vocab check, BPE with recorded steps, token IDs |
 | `src/lib/similarity.ts` | Stage 8 maths: edit-distance similarity, cosine similarity, edges |
-| `src/lib/data.ts` | Loads the data files; embedding-row lookup (stage 7) |
+| `src/lib/data.ts` | Loads the data files; embedding-row lookup (stage 7); `withLearned()` extends vocab and vectors |
+| `src/lib/useLearnedWords.ts` | Learned-word list, saved in the browser |
 | `src/components/Stage.tsx` | Frame for each stage: number, colour, title, explanation |
 | `src/components/VocabPanel.tsx` | Stage 1: searchable vocabulary grid |
 | `src/components/TokenStages.tsx` | Stages 2–6 UI, including the animated BPE merges |

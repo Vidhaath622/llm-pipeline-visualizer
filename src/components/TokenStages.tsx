@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react'
-import { Check, Play, X } from 'lucide-react'
+import { Check, Play, Plus, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NumberTicker } from '@/components/ui/number-ticker'
-import type { TokenizeResult, WordResult } from '@/lib/tokenizer'
+import type { Tokenizer, TokenizeResult, WordResult } from '@/lib/tokenizer'
 
 export const DEMOS = [
   'The unhappiness of tokenization',
@@ -55,36 +55,73 @@ export function TextStage({
 
 /* ---------- Stage 3: vocabulary check ---------- */
 
-export function VocabCheckStage({ words }: { words: WordResult[] }) {
+export function VocabCheckStage({
+  words,
+  tokenizer,
+  learning,
+  justAdded,
+}: {
+  words: WordResult[]
+  tokenizer: Tokenizer
+  learning: boolean
+  justAdded: string[]
+}) {
+  const known = words.filter((w) => w.inVocab && !w.learned).length
+  const learned = words.filter((w) => w.learned)
+  const unknown = words.filter((w) => !w.inVocab).length
   return (
-    <div className="flex flex-wrap gap-2">
-      <AnimatePresence mode="popLayout">
-        {words.map((w, i) => (
-          <motion.span
-            key={`${i}-${w.word}`}
-            layout
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-            transition={{ delay: i * 0.04 }}
-            className={cn(
-              chip,
-              'gap-1.5',
-              w.inVocab
-                ? 'border-[var(--ok)]/50 bg-[var(--ok)]/10 text-[var(--ok)]'
-                : 'border-[var(--miss)]/50 bg-[var(--miss)]/10 text-[var(--miss)]',
-            )}
-          >
-            {w.inVocab ? <Check className="size-3.5" /> : <X className="size-3.5" />}
-            {w.word}
-          </motion.span>
-        ))}
-      </AnimatePresence>
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-2">
+        <AnimatePresence mode="popLayout">
+          {words.map((w, i) => (
+            <motion.span
+              key={`${i}-${w.word}-${w.learned}`}
+              layout
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              transition={{ delay: i * 0.04 }}
+              className={cn(
+                chip,
+                'gap-1.5',
+                w.learned
+                  ? 'border-[var(--s1)]/60 bg-[var(--s1)]/12 text-[var(--s1)]'
+                  : w.inVocab
+                    ? 'border-[var(--ok)]/50 bg-[var(--ok)]/10 text-[var(--ok)]'
+                    : 'border-[var(--miss)]/50 bg-[var(--miss)]/10 text-[var(--miss)]',
+                justAdded.includes(w.word) && 'ring-2 ring-[var(--s1)]/50',
+              )}
+            >
+              {w.learned ? <Plus className="size-3.5" /> : w.inVocab ? <Check className="size-3.5" /> : <X className="size-3.5" />}
+              {w.word}
+              {w.learned && <span className="text-[11px] opacity-70">#{w.ids[0]}</span>}
+            </motion.span>
+          ))}
+        </AnimatePresence>
+      </div>
       {words.length > 0 && (
-        <p className="w-full pt-1 text-xs text-muted-foreground">
-          {words.filter((w) => w.inVocab).length} of {words.length} words are already tokens. The{' '}
-          <span className="text-[var(--miss)]">red</span> ones go to subword tokenization.
-        </p>
+        <div className="space-y-1 text-xs text-muted-foreground">
+          <p>
+            <span className="text-[var(--ok)]">{known} known</span>
+            {learned.length > 0 && <> · <span className="text-[var(--s1)]">{learned.length} learned</span></>}
+            {unknown > 0 && <> · <span className="text-[var(--miss)]">{unknown} unknown</span></>}
+            {unknown > 0 &&
+              (learning
+                ? ' → split by BPE below, then added to the vocabulary when you pause typing.'
+                : ' → split by BPE below. Learning is off, so they stay unknown.')}
+          </p>
+          {learned.map((w) => (
+            <p key={w.word} className="font-mono">
+              <span className="text-[var(--s1)]">{w.word}</span> is now token #{w.ids[0]}. BPE used to need{' '}
+              {w.bpeTokens.length} tokens: {w.bpeTokens.join(' | ')}
+            </p>
+          ))}
+          {justAdded.length > 0 && (
+            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[var(--s1)]">
+              Added to the vocabulary: {justAdded.map((w) => `${w} (#${tokenizer.vocab[w]})`).join(', ')}
+            </motion.p>
+          )}
+        </div>
       )}
     </div>
   )
@@ -92,7 +129,13 @@ export function VocabCheckStage({ words }: { words: WordResult[] }) {
 
 /* ---------- Stage 4: subword tokenization (BPE) ---------- */
 
-export function SubwordStage({ words }: { words: WordResult[] }) {
+export function SubwordStage({
+  words,
+  onBusyChange,
+}: {
+  words: WordResult[]
+  onBusyChange?: (busy: boolean) => void
+}) {
   const unknown = words.filter((w) => !w.inVocab)
   const maxSteps = Math.max(0, ...unknown.map((w) => w.steps.length - 1))
   const key = unknown.map((w) => w.word).join(' ')
@@ -105,6 +148,12 @@ export function SubwordStage({ words }: { words: WordResult[] }) {
     setPlaying(true)
   }, [key])
 
+  // Tell the app while merges are still playing, so a word isn't learned mid-animation.
+  const busy = playing && unknown.length > 0 && step < maxSteps
+  useEffect(() => {
+    onBusyChange?.(busy)
+  }, [busy, onBusyChange])
+
   useEffect(() => {
     if (!playing) return
     if (step >= maxSteps) {
@@ -116,7 +165,11 @@ export function SubwordStage({ words }: { words: WordResult[] }) {
   }, [playing, step, maxSteps])
 
   if (!unknown.length)
-    return <p className="text-sm text-muted-foreground">Every word was in the vocabulary, so nothing to split.</p>
+    return (
+      <p className="text-sm text-muted-foreground">
+        Every word is in the vocabulary, so nothing to split. Type a word it doesn't know to see BPE at work.
+      </p>
+    )
 
   return (
     <div className="space-y-4">
@@ -192,7 +245,7 @@ export function SubwordStage({ words }: { words: WordResult[] }) {
 
 /* ---------- Stage 5: tokens ---------- */
 
-export function TokensStage({ result }: { result: TokenizeResult }) {
+export function TokensStage({ result, baseSize }: { result: TokenizeResult; baseSize: number }) {
   let k = 0
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -206,7 +259,13 @@ export function TokensStage({ result }: { result: TokenizeResult }) {
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.03 }}
-                className={cn(chip, 'border-transparent bg-[var(--s5)]/12 text-[var(--s5)]')}
+                className={cn(
+                  chip,
+                  'border-transparent',
+                  result.ids[idx] >= baseSize
+                    ? 'bg-[var(--s1)]/15 text-[var(--s1)]'
+                    : 'bg-[var(--s5)]/12 text-[var(--s5)]',
+                )}
               >
                 {t}
               </motion.span>
@@ -223,14 +282,20 @@ export function TokensStage({ result }: { result: TokenizeResult }) {
 
 /* ---------- Stage 6: token IDs ---------- */
 
-export function IdsStage({ result }: { result: TokenizeResult }) {
+export function IdsStage({ result, baseSize }: { result: TokenizeResult; baseSize: number }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-1.5">
         {result.tokens.map((t, i) => (
           <div
             key={`${i}-${t}-${result.ids[i]}`}
-            className="flex min-w-14 flex-col items-center rounded-md border border-[var(--s6)]/40 bg-[var(--s6)]/8 px-2 py-1.5"
+            className={cn(
+              'flex min-w-14 flex-col items-center rounded-md border px-2 py-1.5',
+              result.ids[i] >= baseSize
+                ? 'border-[var(--s1)]/50 bg-[var(--s1)]/10'
+                : 'border-[var(--s6)]/40 bg-[var(--s6)]/8',
+            )}
+            title={result.ids[i] >= baseSize ? 'Learned token: added after training' : undefined}
           >
             <span className="font-mono text-[11px] text-muted-foreground">{t}</span>
             <NumberTicker

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useRef, useState, type RefObject } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { AnimatedBeam } from '@/components/ui/animated-beam'
 import { Button } from '@/components/ui/button'
@@ -7,15 +7,16 @@ import { Stage } from '@/components/Stage'
 import { VocabPanel } from '@/components/VocabPanel'
 import { IdsStage, SubwordStage, TextStage, TokensStage, VocabCheckStage, DEMOS } from '@/components/TokenStages'
 import { VectorsStage } from '@/components/VectorsStage'
-import { usePipelineData } from '@/lib/data'
+import { usePipelineData, withLearned } from '@/lib/data'
+import { useLearnedWords } from '@/lib/useLearnedWords'
 
 // three.js is large, so the 3D graphs load separately.
 const GraphStage = lazy(() => import('@/components/GraphStage').then((m) => ({ default: m.GraphStage })))
 
 const STAGES = [
-  { title: 'Vocabulary', color: '--s1', blurb: 'Every token the model knows, each with a fixed integer ID. Built from Wikipedia: common whole words, plus subword pieces learned by BPE.' },
+  { title: 'Vocabulary', color: '--s1', blurb: 'Every token the model knows, each with a fixed integer ID. Built from Wikipedia: common whole words, plus subword pieces learned by BPE. New words you type are added at the end.' },
   { title: 'Text', color: '--s2', blurb: 'What you type. It is lowercased and stripped of punctuation before anything else happens.' },
-  { title: 'Vocabulary check', color: '--s3', blurb: 'Each word is looked up. A hit is already a token; a miss has to be broken into smaller pieces.' },
+  { title: 'Vocabulary check', color: '--s3', blurb: 'Each word is looked up. A hit is already a token; a miss has to be broken into smaller pieces, and is then added to the vocabulary.' },
   { title: 'Subword tokenization (BPE)', color: '--s4', blurb: 'Unknown words start as letters. The most common neighbouring pair is glued together, again and again, in the order BPE learned them.' },
   { title: 'Tokens', color: '--s5', blurb: 'The final pieces. Outlines group the tokens that came from one word.' },
   { title: 'Token IDs', color: '--s6', blurb: 'Each token is swapped for its ID from the vocabulary. This list of integers is what the model actually receives.' },
@@ -24,13 +25,46 @@ const STAGES = [
 ] as const
 
 export default function App() {
-  const { data, error } = usePipelineData()
+  const { data: baseData, error } = usePipelineData()
+  const vocab = useLearnedWords()
   const [text, setText] = useState(DEMOS[1])
   const [stepMode, setStepMode] = useState(false)
   const [step, setStep] = useState(1)
 
+  // The vocabulary as it stands now: trained tokens plus any learned words.
+  const data = useMemo(() => (baseData ? withLearned(baseData, vocab.learned) : null), [baseData, vocab.learned])
   const result = useMemo(() => data?.tokenizer.tokenize(text), [data, text])
   const used = useMemo(() => new Set(result?.tokens ?? []), [result])
+
+  // ---- Learning new words ----
+  // A word is added once typing has paused (so half-typed words aren't added
+  // on every keystroke) and the BPE animation has shown how it was split.
+  const [idle, setIdle] = useState(false)
+  const [bpeBusy, setBpeBusy] = useState(false)
+  const [justAdded, setJustAdded] = useState<string[]>([])
+  // Words just removed or reset stay unknown until the text is edited,
+  // otherwise they'd be re-learned straight away.
+  const [blocked, setBlocked] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    setIdle(false)
+    setBlocked(new Set())
+    const t = setTimeout(() => setIdle(true), 1500)
+    return () => clearTimeout(t)
+  }, [text])
+  useEffect(() => {
+    if (!vocab.enabled || !idle || bpeBusy || !result) return
+    const unknown = [
+      ...new Set(result.words.filter((w) => !w.inVocab && w.word.length > 1 && !blocked.has(w.word)).map((w) => w.word)),
+    ]
+    if (!unknown.length) return
+    vocab.add(unknown)
+    setJustAdded(unknown)
+  }, [vocab.enabled, idle, bpeBusy, result, vocab.add, blocked])
+  useEffect(() => {
+    if (!justAdded.length) return
+    const t = setTimeout(() => setJustAdded([]), 6000)
+    return () => clearTimeout(t)
+  }, [justAdded])
 
   const container = useRef<HTMLDivElement>(null)
   const dots = useRef(STAGES.map(() => ({ current: null as HTMLDivElement | null }))).current
@@ -104,12 +138,30 @@ export default function App() {
                 color={s.color}
                 visible={visible(n)}
               >
-                {n === 1 && <VocabPanel data={data} used={used} />}
+                {n === 1 && (
+                  <VocabPanel
+                    data={data}
+                    used={used}
+                    justAdded={justAdded}
+                    learning={vocab.enabled}
+                    setLearning={vocab.setEnabled}
+                    onRemove={(w) => {
+                      setBlocked((b) => new Set([...b, w]))
+                      vocab.remove(w)
+                    }}
+                    onReset={() => {
+                      setBlocked((b) => new Set([...b, ...vocab.learned]))
+                      vocab.reset()
+                    }}
+                  />
+                )}
                 {n === 2 && <TextStage text={text} setText={setText} normalized={result.normalized} />}
-                {n === 3 && <VocabCheckStage words={result.words} />}
-                {n === 4 && <SubwordStage words={result.words} />}
-                {n === 5 && <TokensStage result={result} />}
-                {n === 6 && <IdsStage result={result} />}
+                {n === 3 && (
+                  <VocabCheckStage words={result.words} tokenizer={data.tokenizer} learning={vocab.enabled} justAdded={justAdded} />
+                )}
+                {n === 4 && <SubwordStage words={result.words} onBusyChange={setBpeBusy} />}
+                {n === 5 && <TokensStage result={result} baseSize={data.tokenizer.baseSize} />}
+                {n === 6 && <IdsStage result={result} baseSize={data.tokenizer.baseSize} />}
                 {n === 7 && <VectorsStage data={data} result={result} />}
                 {n === 8 && (
                   <Suspense fallback={<p className="font-mono text-sm text-muted-foreground">Loading 3D graphs…</p>}>

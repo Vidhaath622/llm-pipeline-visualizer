@@ -19,7 +19,13 @@ export function VectorsStage({ data, result }: { data: PipelineData; result: Tok
         <div className="min-w-[640px] space-y-1">
           {rows.map((id, r) => (
             <div key={`${r}-${id}`} className="grid grid-cols-[7rem_3.5rem_1fr] items-center gap-3">
-              <span className="truncate font-mono text-xs">{result.tokens[r]}</span>
+              <span
+                className={`truncate font-mono text-xs ${data.tokenizer.isLearnedId(id) ? 'text-[var(--s1)]' : ''}`}
+                title={data.tokenizer.isLearnedId(id) ? 'Learned token: average of the pieces it replaced' : undefined}
+              >
+                {result.tokens[r]}
+                {data.tokenizer.isLearnedId(id) && ' *'}
+              </span>
               <span className="font-mono text-[11px] text-muted-foreground tabular-nums">#{id}</span>
               <Strip
                 values={data.embeddings.vector(id)}
@@ -35,6 +41,12 @@ export function VectorsStage({ data, result }: { data: PipelineData; result: Tok
           : `Showing ${SHOW} of ${dims} numbers per token · vectors from ${model}. Hover a cell.`}
         {result.ids.length > rows.length && ` · first ${rows.length} tokens`}
       </p>
+      {result.ids.some((id) => data.tokenizer.isLearnedId(id)) && (
+        <p className="max-w-[75ch] text-xs text-muted-foreground">
+          <span className="text-[var(--s1)]">*</span> Learned tokens have no trained vector yet, so they start as the
+          average of the pieces they replaced. A real model would need further training to learn a proper one.
+        </p>
+      )}
     </div>
   )
 }
