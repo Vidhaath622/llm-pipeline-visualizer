@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Don't scan the data files for class names: the 2.6 MB vector file made builds take ~50s. */
+@source not "../public";
+@source not "../scripts";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource/ibm-plex-sans/latin-400.css";
